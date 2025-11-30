@@ -1,12 +1,765 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SourceTrace | Industrial AI Mapper</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet">
+  <style>
+    :root {
+      --bg-canvas: #f8fafc;
+      --text-main: #0f172a;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: var(--bg-canvas);
+      color: var(--text-main);
+      overflow-x: hidden;
+    }
+
+    /* --- MAP WRAPPER --- */
+    #map-wrapper {
+      width: 100%;
+      max-width: 1400px;
+      margin: 0 auto;
+      position: relative;
+      /* Fixed aspect ratio to match Equirectangular projection (2:1) */
+      aspect-ratio: 2 / 1;
+      background: #cbd5e1;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.05);
+      border: 1px solid #94a3b8;
+    }
+
+    #world-map {
+      width: 100%;
+      height: 100%;
+      position: absolute;
+      top: 0;
+      left: 0;
+      object-fit: cover;
+      opacity: 0.5;
+      mix-blend-mode: multiply;
+      filter: grayscale(100%) contrast(1.1);
+      pointer-events: none;
+    }
+
+    #chain-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* --- DIAGRAM SECTION --- */
+    #diagram-section {
+      width: 100%;
+      overflow-x: auto;
+      padding: 40px 20px;
+      background: #f8fafc;
+    }
+
+    #diagram-content {
+      display: flex;
+      gap: 40px;
+      width: max-content;
+      min-width: 100%;
+      position: relative;
+      padding-bottom: 80px;
+      margin: 0 auto;
+    }
+
+    #connections-svg {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .stage-column {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      width: 340px;
+      flex-shrink: 0;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* CARDS */
+    .node-card {
+      background: white;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 16px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+      transition: all 0.2s ease;
+      cursor: pointer;
+      position: relative;
+    }
+
+    .node-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+      border-color: #64748b;
+      z-index: 10;
+    }
+
+    .node-card.active {
+      border-color: #2563eb;
+      background-color: #eff6ff;
+      ring: 2px solid #2563eb;
+    }
+
+    .part-badge {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      background: #f1f5f9;
+      color: #475569;
+      padding: 3px 8px;
+      border-radius: 4px;
+      margin-bottom: 8px;
+      display: inline-block;
+      border: 1px solid #e2e8f0;
+    }
+
+    /* LOADING SPINNER */
+    .loader {
+      border: 3px solid #e2e8f0;
+      border-top: 3px solid #0f172a;
+      border-radius: 50%;
+      width: 24px;
+      height: 24px;
+      animation: spin 1s linear infinite;
+      display: inline-block;
+    }
+
+    @keyframes spin {
+      0% {
+        transform: rotate(0deg);
+      }
+
+      100% {
+        transform: rotate(360deg);
+      }
+    }
+
+    /* TOOLTIP */
+    #tooltip {
+      position: absolute;
+      opacity: 0;
+      background: rgba(15, 23, 42, 0.95);
+      color: white;
+      padding: 12px;
+      border-radius: 6px;
+      font-size: 11px;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+      pointer-events: none;
+      z-index: 100;
+      transition: opacity 0.1s;
+      max-width: 200px;
+      line-height: 1.4;
+      backdrop-filter: blur(4px);
+    }
+  </style>
 </head>
+
 <body>
-    
-    
+
+  <nav class="bg-white border-b border-slate-200 sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <span class="text-xl font-bold tracking-tight text-slate-800">Source<span
+            class="text-blue-600">Trace</span></span>
+      </div>
+      <button onclick="toggleSettings()"
+        class="text-xs font-mono text-slate-500 hover:text-slate-800 flex items-center gap-2 bg-slate-50 px-3 py-2 rounded border border-slate-200">
+        <span>KEY SETTINGS</span>
+      </button>
+    </div>
+  </nav>
+
+  <div id="settingsModal"
+    class="hidden fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] flex items-center justify-center">
+    <div class="bg-white p-6 rounded-xl w-[450px] shadow-2xl border border-slate-100">
+      <h3 class="font-bold text-lg text-slate-800 mb-2">Configure AI Access</h3>
+      <p class="text-sm text-slate-500 mb-4">Requires OpenAI API Key</p>
+      <input type="password" id="apiKey"
+        class="w-full bg-slate-50 border border-slate-200 rounded p-3 mb-6 text-sm outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+        placeholder="sk-...">
+      <div class="flex justify-end gap-2">
+        <button onclick="toggleSettings()"
+          class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded">Cancel</button>
+        <button onclick="saveKey()"
+          class="px-4 py-2 bg-blue-600 text-white text-sm font-bold rounded hover:bg-blue-700 transition-colors">Save
+          Key</button>
+      </div>
+    </div>
+  </div>
+
+  <section class="py-10 px-6 text-center bg-white border-b border-slate-100">
+    <h1 class="text-3xl md:text-4xl font-bold text-slate-900 mb-3 tracking-tight">Generative Supply Chain Visualiser
+    </h1>
+    <p class="text-slate-500 max-w-2xl mx-auto mb-6 text-sm">Estimate the Odyssey that a product goes through to reach
+      you in the UK</p>
+    <div class="max-w-2xl mx-auto relative group">
+      <input type="text" id="searchInput"
+        class="w-full pl-6 pr-32 py-4 bg-slate-50 border border-slate-200 rounded-full shadow-sm outline-none focus:ring-2 focus:ring-blue-500 transition-all font-medium text-slate-800"
+        placeholder="E.g. iPhone 15, Tesla Model 3, Nike Air Jordan..." onkeypress="handleEnter(event)">
+      <button onclick="runAnalysis()"
+        class="absolute right-2 top-2 bottom-2 bg-blue-600 hover:bg-blue-700 text-white px-6 rounded-full font-bold text-sm transition-colors">Generate</button>
+    </div>
+    <div id="statusText" class="mt-4 text-xs font-mono text-slate-400 h-4"></div>
+  </section>
+
+  <section class="px-6 py-8 bg-slate-50">
+    <div id="map-wrapper">
+      <img id="world-map" src="https://upload.wikimedia.org/wikipedia/commons/8/83/Equirectangular_projection_SW.jpg"
+        alt="Map">
+      <canvas id="chain-canvas"></canvas>
+      <div id="tooltip"></div>
+      <div
+        class="absolute bottom-4 left-4 bg-white/90 backdrop-blur border border-slate-200 p-2 rounded-lg text-[10px] font-bold shadow-sm flex gap-3 uppercase text-slate-500 tracking-wider">
+        <div class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-red-500"></span> Raw</div>
+        <div class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-orange-500"></span> Refine</div>
+        <div class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-yellow-400"></span> Components</div>
+        <div class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-green-500"></span> Assembly</div>
+      </div>
+    </div>
+  </section>
+
+  <section id="diagram-section">
+    <div class="max-w-[1800px] mx-auto">
+      <div class="flex items-end justify-between border-b border-slate-200 pb-4 mb-8">
+        <div>
+          <h2 class="text-xl font-bold text-slate-800">Supply chain breakdown</h2>
+        </div>
+      </div>
+
+      <div id="diagram-content">
+        <svg id="connections-svg"></svg>
+        <div class="w-full text-center py-12 text-slate-400 text-sm font-mono uppercase tracking-widest"
+          id="emptyState">
+          Awaiting Input
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <script>
+    // --- CONFIGURATION ---
+    const STAGES = {
+      raw_materials: { id: 1, label: '1. Raw Materials', color: '#ef4444' },
+      refinement: { id: 2, label: '2. Refinement', color: '#f97316' },
+      components: { id: 3, label: '3. Components', color: '#facc15' },
+      assembly: { id: 4, label: '4. Assembly', color: '#22c55e' },
+      distribution: { id: 5, label: '5. Distribution', color: '#22d3ee' },
+      destination: { id: 6, label: '6. Destination', color: '#2563eb' }
+    };
+    const STAGE_KEYS = Object.keys(STAGES);
+
+    let ctx, canvas, mapWidth, mapHeight;
+    let nodes = [];
+    let hoveredNode = null;
+    let hoveredRoute = null;
+    let apiKey = localStorage.getItem('nexus_key') || '';
+
+    // --- INIT ---
+    window.onload = () => {
+      initMap();
+      if (apiKey) document.getElementById('apiKey').value = apiKey;
+      else toggleSettings();
+      window.addEventListener('resize', () => { resizeMap(); renderConnections(); });
+    };
+
+    function toggleSettings() { document.getElementById('settingsModal').classList.toggle('hidden'); }
+    function saveKey() {
+      apiKey = document.getElementById('apiKey').value.trim();
+      if (apiKey) localStorage.setItem('nexus_key', apiKey);
+      toggleSettings();
+    }
+    function handleEnter(e) { if (e.key === 'Enter') runAnalysis(); }
+
+    // --- CORE LOGIC ---
+    async function runAnalysis() {
+      const query = document.getElementById('searchInput').value.trim();
+      if (!query) return;
+      if (!apiKey || !apiKey.startsWith('sk-')) {
+        alert("Please enter a valid OpenAI API Key.");
+        toggleSettings();
+        return;
+      }
+
+      // Reset UI
+      nodes = [];
+      const container = document.getElementById('diagram-content');
+      container.innerHTML = `
+                <svg id="connections-svg"></svg>
+                <div class="w-full flex flex-col items-center justify-center py-20">
+                    <div class="loader mb-4"></div>
+                </div>`;
+
+      // FIX: Added optional check in case element is missing, though added to HTML now
+      const statusEl = document.getElementById('statusText');
+      if (statusEl) statusEl.innerText = `Generating Supply chain ${query}...`;
+
+      drawMap();
+
+      // Execute
+      try {
+        nodes = await fetchAIChain(query);
+
+        // Render
+        container.innerHTML = '<svg id="connections-svg"></svg>';
+        if (statusEl) statusEl.innerText = `Generation Complete`;
+
+        renderColumns();
+        drawMap();
+        // Give DOM time to layout columns before drawing lines
+        setTimeout(renderConnections, 100);
+
+      } catch (error) {
+        console.error(error);
+        container.innerHTML = `<div class="w-full text-center py-10 text-red-500 font-mono text-sm">Error: ${error.message}</div>`;
+        if (statusEl) statusEl.innerText = "Analysis Failed.";
+      }
+    }
+
+    // --- AI ENGINE ---
+    async function fetchAIChain(product) {
+      const prompt = `
+           TASK:
+Create a full manufacturing supply-chain map for ${product} and return the result as STRICT JSON in the exact schema below.
+
+INSTRUCTIONS:
+For the product ${product}, list the full production chain in this exact order:
+
+All raw materials used
+All refinements (summarise multiple sub-steps into a single refinement per material)
+All major components
+Final assembly
+Distribution hub
+Final destination (United Kingdom)
+
+RULES (MUST FOLLOW):
+Be realistic and industry-accurate for locations and processes.
+Use locations that make logistical sense (no unnecessary cross-continent shipping).
+If a brand is given, base locations and component sourcing on that brand’s real supply chain.
+Do NOT mix categories:
+Raw materials = mined or harvested inputs only
+Refinement = processing only
+Components = usable parts only
+The assembly node must contain the assembled ${product} (no material names).
+All finished goods must be delivered to the UK.
+
+CONNECTIVITY RULES (CRITICAL — MUST WORK):
+Every raw material must connect to exactly one refinement.
+Every refinement must connect to exactly one component.
+Every component must connect to the product (assembly).
+After the assembly stage, the supply chain becomes ONE single path only (assembly → distribution → destination).
+
+PART ID RULE (DO NOT BREAK):
+The "part" field is the permanent link ID.
+The same ID must be used for its raw → refinement → component chain.
+Example:
+Battery (raw)
+Battery (refinement)
+Battery (component)
+
+JSON OUTPUT FORMAT (STRICT — NO MARKDOWN, NO EXTRA TEXT):
+{
+"nodes": [
+{
+"stage": "raw_materials" | "refinement" | "components" | "assembly" | "distribution" | "destination",
+"part": "Consistent_Subsystem_Name",
+"location": "City, Country",
+"lat": 0.0,
+"lon": 0.0,
+"material": "Specific Material or Item",
+"process": "Specific Machine or Technique",
+"desc": "Max 5 words. Technical process only (e.g. 'Lithography at 400C').}
+]
+}
+
+QUALITY REQUIREMENTS:
+Use real-world industrial techniques (e.g. smelting, lithography, chemical vapour deposition).
+Locations must be geographically accurate with correct coordinates.
+Each component should be traceable back to realistic materials and processes.
+Be detailed but avoid duplicates.
+
+ONLY OUTPUT VALID JSON.
+DO NOT add explanations or commentary.
+            `;
+
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          // FIX: Changed from gpt-4.1 (invalid) to gpt-4o (current standard)
+          model: "gpt-4o",
+          messages: [{ role: "user", content: prompt }],
+          response_format: { type: "json_object" } // Force JSON mode
+        })
+      });
+
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message);
+
+      // Robust Parsing
+      const content = data.choices[0].message.content;
+      // Safety check in case it still wraps in markdown
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error("Invalid AI Response format.");
+
+      const json = JSON.parse(jsonMatch[0]);
+      return linkNodes(json.nodes);
+    }
+
+    // --- LINKING ALGORITHM ---
+    function linkNodes(rawList) {
+      // 1. Assign internal IDs
+      const list = rawList.map((n, i) => ({ ...n, id: i + 1, connectsTo: [] }));
+
+      // 2. Find or Create Assembly/Logistics Nodes
+      let assemblyNode = list.find(n => n.stage === 'assembly');
+      if (!assemblyNode) {
+        assemblyNode = { id: 999, stage: 'assembly', part: 'MAIN', location: 'Shenzhen, China', lat: 22.5, lon: 114.0, material: 'Final Assembly', process: 'Assembly', desc: 'Integration of components.' };
+        list.push(assemblyNode);
+      }
+
+      let distNode = list.find(n => n.stage === 'distribution');
+      if (!distNode) {
+        distNode = { id: 1000, stage: 'distribution', part: 'MAIN', location: 'Rotterdam, Netherlands', lat: 51.9, lon: 4.4, material: 'Logistics', process: 'Global Freight', desc: 'Container shipping.' };
+        list.push(distNode);
+      }
+
+      let destNode = list.find(n => n.stage === 'destination');
+      if (!destNode) {
+        destNode = { id: 1001, stage: 'destination', part: 'MAIN', location: 'London, UK', lat: 51.5, lon: -0.1, material: 'Retail', process: 'Final Delivery', desc: 'Delivered to UK Market.' };
+        list.push(destNode);
+      }
+
+      // 3. Chain Creation
+      const partNodes = list.filter(n => ['raw_materials', 'refinement', 'components'].includes(n.stage));
+
+      // Group by Part Name to create families
+      const uniqueParts = [...new Set(partNodes.map(n => n.part ? n.part.trim().toLowerCase() : 'unknown'))];
+
+      uniqueParts.forEach(pKey => {
+        const family = list.filter(n => n.part && n.part.trim().toLowerCase() === pKey && ['raw_materials', 'refinement', 'components'].includes(n.stage));
+
+        // Sort by Stage ID (1->2->3)
+        family.sort((a, b) => STAGES[a.stage].id - STAGES[b.stage].id);
+
+        // Link them internally
+        for (let i = 0; i < family.length - 1; i++) {
+          family[i].connectsTo.push(family[i + 1].id);
+        }
+
+        // Link the last one to Assembly
+        if (family.length > 0) {
+          family[family.length - 1].connectsTo.push(assemblyNode.id);
+        }
+      });
+
+      // 4. Final Leg
+      if (!assemblyNode.connectsTo.includes(distNode.id)) assemblyNode.connectsTo.push(distNode.id);
+      if (!distNode.connectsTo.includes(destNode.id)) distNode.connectsTo.push(destNode.id);
+
+      return list;
+    }
+
+    // --- RENDERERS ---
+    function renderColumns() {
+      const container = document.getElementById('diagram-content');
+
+      STAGE_KEYS.forEach(key => {
+        const groupNodes = nodes.filter(n => n.stage === key);
+        if (groupNodes.length === 0) return;
+
+        const col = document.createElement('div');
+        col.className = 'stage-column';
+        col.innerHTML = `<div class="stage-header font-bold text-xs uppercase tracking-wider text-slate-400 mb-4 border-b border-slate-200 pb-2">${STAGES[key].label}</div>`;
+
+        groupNodes.forEach(node => {
+          const card = document.createElement('div');
+          card.className = 'node-card';
+          card.id = `node-${node.id}`;
+
+          let badge = (node.part && node.part !== 'MAIN') ? `<span class="part-badge">${node.part}</span>` : '';
+
+          card.innerHTML = `
+                        ${badge}
+                        <h4 class="font-bold text-slate-800 text-sm mb-1 leading-tight">${node.material}</h4>
+                        <div class="flex items-center gap-1 text-[11px] text-slate-500 mb-3 font-mono">
+                            <span class="text-blue-600">●</span> ${node.location}
+                        </div>
+                        <div class="bg-slate-50 p-2 rounded border border-slate-100">
+                            <div class="text-[10px] font-bold text-slate-700 uppercase mb-1 tracking-wide">${node.process}</div>
+                            <p class="text-[10px] text-slate-500 leading-relaxed">${node.desc || 'Technical processing.'}</p>
+                        </div>
+                    `;
+
+          card.onmouseenter = () => { hoveredNode = node; highlightPath(node); drawMap(); };
+          card.onmouseleave = () => { hoveredNode = null; resetPath(); drawMap(); };
+          col.appendChild(card);
+        });
+        container.appendChild(col);
+      });
+    }
+
+    function renderConnections() {
+      const svg = document.getElementById('connections-svg');
+      const container = document.getElementById('diagram-content');
+      svg.innerHTML = '';
+      svg.style.width = container.scrollWidth + 'px';
+      svg.style.height = container.scrollHeight + 'px';
+
+      nodes.forEach(source => {
+        source.connectsTo.forEach(tid => {
+          const sEl = document.getElementById(`node-${source.id}`);
+          const tEl = document.getElementById(`node-${tid}`);
+          if (!sEl || !tEl) return;
+
+          const sRect = sEl.getBoundingClientRect();
+          const tRect = tEl.getBoundingClientRect();
+          const cRect = container.getBoundingClientRect();
+
+          const x1 = (sRect.right - cRect.left) + container.scrollLeft;
+          const y1 = (sRect.top - cRect.top) + container.scrollTop + (sRect.height / 2);
+          const x2 = (tRect.left - cRect.left) + container.scrollLeft;
+          const y2 = (tRect.top - cRect.top) + container.scrollTop + (tRect.height / 2);
+
+          const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+          const cpOffset = (x2 - x1) * 0.5;
+          const d = `M ${x1} ${y1} C ${x1 + cpOffset} ${y1}, ${x2 - cpOffset} ${y2}, ${x2} ${y2}`;
+
+          path.setAttribute("d", d);
+          path.setAttribute("fill", "none");
+          path.setAttribute("stroke", "#cbd5e1");
+          path.setAttribute("stroke-width", "1.5");
+          path.setAttribute("class", `cx-line from-${source.id} to-${tid}`);
+          svg.appendChild(path);
+        });
+      });
+    }
+
+    // --- MAP FUNCTIONS ---
+    function initMap() {
+      canvas = document.getElementById('chain-canvas');
+      ctx = canvas.getContext('2d');
+      canvas.addEventListener('mousemove', onCanvasMouseMove);
+      resizeMap();
+    }
+
+    function resizeMap() {
+      const w = document.getElementById('map-wrapper');
+      mapWidth = w.clientWidth;
+      mapHeight = w.clientHeight;
+
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = mapWidth * dpr;
+      canvas.height = mapHeight * dpr;
+      canvas.style.width = mapWidth + 'px';
+      canvas.style.height = mapHeight + 'px';
+      ctx.scale(dpr, dpr);
+      drawMap();
+    }
+
+    function latLonToXY(lat, lon) {
+      // Adjusted for standard Equirectangular projection (W:H = 2:1)
+      const x = (lon + 180) * (mapWidth / 360);
+      const y = (90 - lat) * (mapHeight / 180);
+      return { x, y };
+    }
+
+    function onCanvasMouseMove(e) {
+      const rect = canvas.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+
+      let hitNode = null;
+      let hitRoute = null;
+
+      // 1. Check Nodes
+      nodes.forEach(n => {
+        const pos = latLonToXY(n.lat, n.lon);
+        if (Math.hypot(pos.x - mx, pos.y - my) < 10) hitNode = n;
+      });
+
+      // 2. Check Routes (Quadratic Bezier Hit Test)
+      if (!hitNode) {
+        nodes.forEach(n1 => {
+          n1.connectsTo.forEach(tid => {
+            const n2 = nodes.find(x => x.id === tid);
+            if (n2) {
+              const p1 = latLonToXY(n1.lat, n1.lon);
+              const p2 = latLonToXY(n2.lat, n2.lon);
+              const cpY = (p1.y + p2.y) / 2 - (Math.hypot(p2.x - p1.x, p2.y - p1.y) * 0.2);
+              const cpX = (p1.x + p2.x) / 2;
+
+              if (isPointNearQuadraticBezier(mx, my, p1.x, p1.y, cpX, cpY, p2.x, p2.y, 6)) {
+                hitRoute = { source: n1, target: n2 };
+              }
+            }
+          });
+        });
+      }
+
+      if (hitNode !== hoveredNode || (hitRoute?.source?.id !== hoveredRoute?.source?.id)) {
+        hoveredNode = hitNode;
+        hoveredRoute = hitRoute;
+        canvas.style.cursor = (hoveredNode || hoveredRoute) ? 'pointer' : 'default';
+        drawMap();
+        updateTooltip(e.clientX, e.clientY);
+      } else if (hoveredNode || hoveredRoute) {
+        updateTooltip(e.clientX, e.clientY);
+      } else {
+        document.getElementById('tooltip').style.opacity = 0;
+      }
+    }
+
+    function updateTooltip(cx, cy) {
+      const tt = document.getElementById('tooltip');
+      const rect = canvas.getBoundingClientRect();
+      const mapX = cx - rect.left;
+      const mapY = cy - rect.top;
+
+      if (hoveredNode) {
+        // 1. Get the readable Stage Name (e.g., "1. Raw Materials")
+        const stageLabel = STAGES[hoveredNode.stage]?.label || 'Logistics';
+        
+        // 2. Get the specific Component/Material name
+        const componentName = hoveredNode.material || hoveredNode.part;
+
+        tt.style.opacity = 1; 
+        tt.style.left = (mapX + 15) + 'px'; 
+        tt.style.top = (mapY - 15) + 'px';
+        
+        // 3. Render the new layout
+        tt.innerHTML = `
+            <div class="text-[9px] uppercase font-bold text-blue-400 mb-1 tracking-wider">
+                ${stageLabel}
+            </div>
+            <div class="text-white font-bold text-sm leading-tight mb-1">
+                ${componentName}
+            </div>
+            <div class="text-[10px] text-slate-400 font-mono">
+                ${hoveredNode.location}
+            </div>
+        `;
+      } else if (hoveredRoute) {
+        tt.style.opacity = 1; 
+        tt.style.left = (mapX + 15) + 'px'; 
+        tt.style.top = (mapY - 15) + 'px';
+        tt.innerHTML = `
+            <div class="text-[9px] uppercase font-bold text-slate-500 mb-1">Transit Route</div>
+            <div class="text-[10px] text-white">
+                ${hoveredRoute.source.location} <span class="text-blue-500">→</span> ${hoveredRoute.target.location}
+            </div>
+        `;
+      } else {
+        tt.style.opacity = 0;
+      }
+    }
+
+    function isPointNearQuadraticBezier(px, py, x0, y0, x1, y1, x2, y2, tolerance) {
+      // Sample points along the curve (imperfect but fast enough for this count)
+      for (let t = 0; t <= 1; t += 0.05) {
+        const x = (1 - t) * (1 - t) * x0 + 2 * (1 - t) * t * x1 + t * t * x2;
+        const y = (1 - t) * (1 - t) * y0 + 2 * (1 - t) * t * y1 + t * t * y2;
+        if (Math.hypot(px - x, py - y) < tolerance) return true;
+      }
+      return false;
+    }
+
+    function drawMap() {
+      ctx.clearRect(0, 0, mapWidth, mapHeight);
+
+      // Draw Routes
+      nodes.forEach(n => {
+        n.connectsTo.forEach(tid => {
+          const t = nodes.find(x => x.id === tid);
+          if (t) drawMapCurve(n, t);
+        });
+      });
+
+      // Draw Nodes
+      nodes.forEach(n => {
+        const pos = latLonToXY(n.lat, n.lon);
+        const stageConfig = STAGES[n.stage];
+        const color = stageConfig ? stageConfig.color : '#94a3b8';
+
+        const isHover = hoveredNode && hoveredNode.id === n.id;
+        ctx.beginPath(); ctx.arc(pos.x, pos.y, isHover ? 6 : 3, 0, Math.PI * 2);
+        ctx.fillStyle = color; ctx.fill();
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1; ctx.stroke();
+
+        if (isHover) {
+          ctx.beginPath(); ctx.arc(pos.x, pos.y, 12, 0, Math.PI * 2); ctx.fillStyle = color + '66'; ctx.fill();
+        }
+      });
+    }
+
+    function drawMapCurve(n1, n2) {
+      const p1 = latLonToXY(n1.lat, n1.lon);
+      const p2 = latLonToXY(n2.lat, n2.lon);
+      const isHover = hoveredRoute && hoveredRoute.source.id === n1.id && hoveredRoute.target.id === n2.id;
+
+      const stageConfig = STAGES[n1.stage];
+      const baseColor = stageConfig ? stageConfig.color : '#cbd5e1';
+
+      ctx.beginPath();
+      ctx.moveTo(p1.x, p1.y);
+      const cpY = (p1.y + p2.y) / 2 - (Math.hypot(p2.x - p1.x, p2.y - p1.y) * 0.2);
+      ctx.quadraticCurveTo((p1.x + p2.x) / 2, cpY, p2.x, p2.y);
+
+      ctx.strokeStyle = baseColor;
+      ctx.lineWidth = isHover ? 8 : 4;
+      ctx.globalAlpha = isHover ? 1.0 : 0.6;
+      ctx.stroke();
+      ctx.globalAlpha = 1.0;
+    }
+
+    function highlightPath(node) {
+      document.querySelectorAll('.node-card').forEach(c => c.style.opacity = '0.3');
+      document.querySelectorAll('.cx-line').forEach(l => l.style.opacity = '0.1');
+      const card = document.getElementById(`node-${node.id}`);
+      if (card) { card.style.opacity = '1'; card.classList.add('active'); }
+
+      node.connectsTo.forEach(tid => {
+        document.getElementById(`node-${tid}`).style.opacity = '1';
+        const l = document.querySelector(`.cx-line.from-${node.id}.to-${tid}`);
+        if (l) { l.style.opacity = '1'; l.setAttribute('stroke', '#2563eb'); l.setAttribute('stroke-width', '3'); }
+      });
+      nodes.forEach(p => {
+        if (p.connectsTo.includes(node.id)) {
+          document.getElementById(`node-${p.id}`).style.opacity = '1';
+          const l = document.querySelector(`.cx-line.from-${p.id}.to-${node.id}`);
+          if (l) { l.style.opacity = '1'; l.setAttribute('stroke', '#2563eb'); l.setAttribute('stroke-width', '3'); }
+        }
+      });
+    }
+
+    function resetPath() {
+      document.querySelectorAll('.node-card').forEach(c => { c.style.opacity = '1'; c.classList.remove('active'); });
+      document.querySelectorAll('.cx-line').forEach(l => {
+        l.style.opacity = '1'; l.setAttribute('stroke', '#cbd5e1'); l.setAttribute('stroke-width', '1.5');
+      });
+    }
+  </script>
 </body>
+
 </html>
